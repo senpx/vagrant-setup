@@ -167,7 +167,7 @@ install_portworx_daemonset = <<SCRIPT
 hostname -I | grep -wq #{k8s_master_ip}
 if [ $? -eq 0 ]; then
    echo ':: Installing Portworx DaemonSet ...'
-   curl -o px-spec.yaml "http://install.portworx.com/?type=oci&c=sencluster&k=etcd://#{k8s_master_ip}:2379&m=#{myvmif}&d=#{myvmif}&kbver=1.7.5&z=ture&f=ture"
+   curl -o px-spec.yaml "http://install.portworx.com/?type=oci&c=sencluster&k=etcd://#{k8s_master_ip}:2379&m=#{myvmif}&d=#{myvmif}&kbver=1.7.5&f=ture"
    kubectl apply -f px-spec.yaml
 else
    echo '(skipping install of Portworx on this node)'
