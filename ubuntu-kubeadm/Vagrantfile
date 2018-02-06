@@ -1,0 +1,170 @@
+# vi: set ft=ruby :
+
+require 'fileutils'                                                             
+require 'tempfile'  
+
+NODE_COUNT    = 3
+MASTER_NAME   = "master"                                                 
+MINION_PREFIX = "minion-" 
+SUBNET        = '192.168.33'
+
+$common_setup = <<SCRIPT
+NODE_COUNT=$1                                                                   
+SUBNET=$2                                                                       
+MASTER_NAME=$3                                                                  
+MINION_PREFIX=$4                                                                
+                     
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+#apt-get update && sudo apt-get install -y docker-engine kubelet=1.6.4-00 kubeadm=1.6.4-00 kubectl=1.6.4-00 kubernetes-cni vim git
+apt-get update && sudo apt-get install -y docker-engine kubelet kubeadm kubectl kubernetes-cni vim git
+
+sed -i s/MountFlags=slave//g /lib/systemd/system/docker.service
+sed -i 's/ExecStart=\\\/usr\\\/bin\\\/docker/ExecStart=\\\/usr\\\/bin\\\/docker --insecure-registry 192.168.33.1:5000/g' /lib/systemd/system/docker.service 
+systemctl daemon-reload
+service docker restart
+
+# dev prep
+git clone https://github.com/harsh-px/k8s-utils.git
+echo "alias k=kubectl" >> ~/.bashrc
+
+#k8s-utils/scripts/dev/update-kubelet.sh					  
+SCRIPT
+
+$kubeadm_init = <<SCRIPT
+#KUBE_HYPERKUBE_IMAGE=harshpx/hyperkube:1.8.0 kubeadm init --apiserver-advertise-address 192.168.33.10 --pod-network-cidr 10.244.0.0/16 --token 8c2350.f55343444a6ffc46
+kubeadm init --apiserver-advertise-address 192.168.33.10 --pod-network-cidr 10.244.0.0/16 --token 8c2350.f55343444a6ffc46
+SCRIPT
+
+$kubeadm_join = <<SCRIPT
+#KUBE_HYPERKUBE_IMAGE=harshpx/hyperkube:1.8.0 kubeadm join --token 8c2350.f55343444a6ffc46 192.168.33.10:6443 --skip-preflight-checks
+kubeadm join --token 8c2350.f55343444a6ffc46 192.168.33.10:6443 --skip-preflight-checks
+SCRIPT
+
+$kubeconfig_setup = <<SCRIPT
+echo "***** Setting up kubeconfig"
+sudo cp /etc/kubernetes/admin.conf $HOME/
+sudo chown $(id -u):$(id -g) $HOME/admin.conf
+echo "export KUBECONFIG=$HOME/admin.conf" >> $HOME/.bashrc
+
+SCRIPT
+
+$flannel_setup = <<SCRIPT
+echo "***** Setting up Flannel network"
+export KUBECONFIG=$HOME/admin.conf
+
+curl -O https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel-rbac.yml && kubectl apply -f kube-flannel-rbac.yml
+curl -O https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+sed -i "s/0.7.0/0.7.1/g" kube-flannel.yml
+kubectl apply -f kube-flannel.yml
+SCRIPT
+
+$device_setup = <<SCRIPT
+SCRIPT
+
+$weave_setup = <<SCRIPT
+echo "***** Setting up Weave network"
+export KUBECONFIG=$HOME/admin.conf
+kubectl apply -n kube-system -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+SCRIPT
+
+
+file_to_disk = 'large_disk.vdi'
+
+Vagrant.configure("2") do |config|
+    config.vm.box = "ubuntu/xenial64"
+    config.vm.boot_timeout = 600
+
+    config.vm.provider "virtualbox" do |v|
+      v.memory = 2048
+      v.cpus = 4
+    end
+
+	config.vm.provision "shell" do |s|
+		s.inline = $common_setup 
+		s.name = "common_setup"
+		s.args = "#{NODE_COUNT} #{SUBNET} #{MASTER_NAME} #{MINION_PREFIX}"
+		s.privileged = true
+	end
+
+    config.vm.define "master" do |node|
+      node.vm.hostname = "master"
+      node.vm.network :private_network, ip: "#{SUBNET}.10"
+      node.vm.provision :shell, inline: "sed 's/127\.0\.0\.1.*master.*/192\.168\.33\.10 master/' -i /etc/hosts"
+
+      node.vm.provision "shell" do |s| 
+	  	s.inline = $kubeadm_init                                            
+		s.name = "kubeadm_init"
+		s.privileged = true                                                 
+	  end 
+
+      node.vm.provision "shell" do |s2|                                  
+	  	s2.inline = $kubeconfig_setup                                            
+		s2.name = "kubeconfig_setup"
+	  end
+
+      node.vm.provision "shell" do |s3|                                  
+	  	s3.inline = $weave_setup
+		s3.name = "weave_setup"
+	  end
+	end
+
+	config.vm.define "minion-1" do |subconfig|
+		subconfig.vm.hostname = "minion-1"
+		subconfig.vm.network :private_network, ip: "#{SUBNET}.11"
+		subconfig.vm.provision :shell, inline: "sed 's/127\.0\.0\.1.*minion-1.*/192\.168\.33\.11 minion-1/' -i /etc/hosts"
+        
+  		subconfig.vm.provision "shell" do |s5|                                   
+  			s5.inline = $kubeadm_join                                            
+			s5.name = "kubeadm_join"
+			s5.privileged = true                                                 
+  		end 
+	end
+
+	config.vm.define "minion-2" do |subconfig|
+		subconfig.vm.hostname = "minion-2"
+		subconfig.vm.network :private_network, ip: "#{SUBNET}.12"
+		subconfig.vm.provision :shell, inline: "sed 's/127\.0\.0\.1.*minion-2.*/192\.168\.33\.12 minion-2/' -i /etc/hosts"
+
+		subconfig.vm.provision "shell" do |s5|                                   
+  			s5.inline = $kubeadm_join                                            
+			s5.name = "kubeadm_join"
+			s5.privileged = true                                                 
+  		end 
+	end
+
+	config.vm.define "minion-3" do |subconfig|
+		subconfig.vm.hostname = "minion-3"
+		subconfig.vm.network :private_network, ip: "#{SUBNET}.13"
+		subconfig.vm.provision :shell, inline: "sed 's/127\.0\.0\.1.*minion-3.*/192\.168\.33\.13 minion-3/' -i /etc/hosts"
+
+		subconfig.vm.provision "shell" do |s5|
+  			s5.inline = $kubeadm_join                                            
+			s5.name = "kubeadm_join"
+			s5.privileged = true                                                 
+  		end 
+	end
+
+#	config.vm.define "minion-4" do |subconfig|
+#		subconfig.vm.hostname = "minion-4"
+#		subconfig.vm.network :private_network, ip: "#{SUBNET}.14"
+#		subconfig.vm.provision :shell, inline: "sed 's/127\.0\.0\.1.*minion-4.*/192\.168\.33\.14 minion-4/' -i /etc/hosts"
+#		subconfig.vm.provision "shell" do |s5|                                   
+#  			s5.inline = $kubeadm_join                                            
+#			s5.name = "kubeadm_join"
+#			s5.privileged = true                                                 
+#  		end 
+#	end
+ 
+	(1..NODE_COUNT).each do |i|  
+        config.vm.define "#{MINION_PREFIX}#{i}" do |subconfig|
+		  subconfig.vm.provider "virtualbox" do |v|
+            disk_name = "#{MINION_PREFIX}#{i}-#{file_to_disk}"
+		    unless File.exist?(disk_name)
+	          v.customize ['createhd', '--filename', disk_name, '--size', 10076]
+	        end
+		    v.customize ['storageattach', :id, '--storagectl', 'SCSI Controller', '--port', 2, '--device', 0, '--type', 'hdd', '--medium', disk_name]
+          end
+	    end
+	end
+end
