@@ -6,6 +6,8 @@
 vm_nodes = {            # EDIT to specify VM node names, and their private IP (vboxnet#)
    'master' => "192.168.56.60",
    'node1' => "192.168.56.61",
+   'node2' => "192.168.56.62",
+   'node3' => "192.168.56.63",
 }
 # EDIT or specify ENV variable to define OS-Type (see `vm_conf` below)
 ostype = ENV['KUBE_OSTYPE'] || 'ubuntu16'
