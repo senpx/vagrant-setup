@@ -6,8 +6,6 @@
 vm_nodes = {            # EDIT to specify VM node names, and their private IP (vboxnet#)
    'master' => "192.168.56.60",
    'node1' => "192.168.56.61",
-   'node2' => "192.168.56.62",
-   'node3' => "192.168.56.63",
 }
 # EDIT or specify ENV variable to define OS-Type (see `vm_conf` below)
 ostype = ENV['KUBE_OSTYPE'] || 'ubuntu16'
@@ -17,7 +15,7 @@ ostype = ENV['KUBE_OSTYPE'] || 'ubuntu16'
 # see https://atlas.hashicorp.com/search? for more VM images (ie. "box-names")
 vm_conf = {
    #'ubuntu14' => [ 'ubuntu/trusty64', 'eth1', 'SATAController', 1, { "sdb" => 15*1024, "sdc" => 20*1024 } ],
-   'ubuntu16' => [ 'ubuntu/xenial64', 'enp0s8', 'SCSI', 2, { "sdc" => 15*1024, "sdd" => 20*1024 } ],
+   'ubuntu16' => [ 'ubuntu/xenial64', 'enp0s8', 'SCSI', 2, { "sdc" => 25*1024} ],
    'centos7'  => [ 'centos/7', 'eth1', 'IDE', 1, { "sdb" => 20*1024 } ],
    #'debian8'  => [ 'debian/jessie64', 'eth1', 'SATA Controller', 1, { "sdb" => 15*1024, "sdc" => 20*1024 } ],
 }
@@ -54,8 +52,15 @@ SCRIPT
 
 # install_docker - installs the latest version of Docker
 install_docker = <<SCRIPT
-   echo ':: Installing Docker ...'
-   curl -fsSL https://get.docker.com | sh -s > /dev/null
+# echo ':: Installing Docker ...'
+# curl -fsSL https://get.docker.com | sh -s > /dev/null
+apt-cache madison docker-ce
+curl -fsSL https://get.docker.com/ | sed 's/docker-ce/docker-ce=17.03.0~ce-0~ubuntu' | sh -s > /dev/null
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+sudo apt-get update
+sudo apt-cache policy docker-ce
+sudo apt-get install docker-ce=17.03.0~ce-0~ubuntu-xenial -y
    systemctl enable docker
    systemctl start docker
 SCRIPT
@@ -100,7 +105,8 @@ if [ -d /etc/apt/sources.list.d ]; then # ----> Ubuntu/Debian distro
    echo "deb http://apt.kubernetes.io/ kubernetes-$(lsb_release -cs) main" \
       > /etc/apt/sources.list.d/kubernetes.list
    #apt-get update && apt-get install -y kubelet kubeadm kubectl kubernetes-cni
-   apt-get update && apt-get install -y kubelet=1.7.5-00 kubeadm=1.7.5-00 kubectl=1.7.5-00 kubernetes-cni
+   apt-get update && apt-get install -y kubelet=1.8.4-00 kubeadm=1.8.4-00 kubectl=1.8.4-00 kubernetes-cni
+#apt-get update && apt-get install -y kubelet=1.10.4-00 kubeadm=1.10.4-00 kubectl=1.10.4-00 kubernetes-cni
 elif [ -d /etc/yum.repos.d ]; then      # ----> CentOS/RHEL distro
    cat > /etc/yum.repos.d/kubernetes.repo << _eof
 [kubernetes]
@@ -112,8 +118,8 @@ repo_gpgcheck=1
 gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg
        https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
 _eof
-
-   yum install -y yum-plugin-versionlock kubelet-1.7.5-0 kubeadm-1.7.5-0 kubectl-1.7.5-0 kubernetes-cni
+   
+   yum install -y yum-plugin-versionlock kubelet-1.8.4-0 kubeadm-1.8.4-0 kubectl-1.8.4-0 kubernetes-cni
    yum versionlock "kube*"
    #yum install -y kubelet kubeadm kubectl kubernetes-cni
 else    # ------------------------------------> (unsuported)
@@ -167,8 +173,8 @@ install_portworx_daemonset = <<SCRIPT
 hostname -I | grep -wq #{k8s_master_ip}
 if [ $? -eq 0 ]; then
    echo ':: Installing Portworx DaemonSet ...'
-   curl -o px-spec.yaml "http://install.portworx.com/?type=oci&c=sencluster&k=etcd://#{k8s_master_ip}:2379&m=#{myvmif}&d=#{myvmif}&kbver=1.7.5&f=ture"
-   kubectl apply -f px-spec.yaml
+   curl -o px-spec.yaml "http://install.portworx.com/?type=oci&c=sencluster&k=etcd://#{k8s_master_ip}:2379&m=#{myvmif}&d=#{myvmif}&kbver=1.8.4&z=ture&f=ture"
+# kubectl apply -f px-spec.yaml
 else
    echo '(skipping install of Portworx on this node)'
 fi
@@ -236,7 +242,6 @@ _eof
             #{install_docker}
             #{install_etcd_v3}
             #{install_kubernetes}
-            #{install_portworx_daemonset}
             ln -s /opt/pwx/bin/pxctl /usr/local/bin/
          SHELL
       end
